@@ -1,10 +1,20 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
+const LOCAL_USER_KEY = 'sdsc-local-user';
+
+interface AppUser {
+    id: string;
+    user_metadata: { name: string };
+}
+
+interface AppSession {
+    user: AppUser;
+}
+
 interface AuthContextType {
-    user: User | null;
-    session: Session | null;
+    user: AppUser | null;
+    session: AppSession | null;
     loading: boolean;
     signOut: () => Promise<void>;
 }
@@ -17,22 +27,43 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
-    const [session, setSession] = useState<Session | null>(null);
+    const [session, setSession] = useState<AppSession | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Busca a sessão atual no load inicial (já está cacheada no local storage via supabase-js)
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setSession(session);
-            setUser(session?.user ?? null);
+        // 1. Tenta sessão do Supabase (login com conta)
+        supabase.auth.getSession().then(({ data: { session: supaSession } }) => {
+            if (supaSession?.user) {
+                setSession({
+                    user: {
+                        id: supaSession.user.id,
+                        user_metadata: { name: supaSession.user.user_metadata?.name ?? 'Leitor' },
+                    }
+                });
+            } else {
+                // 2. Fallback: usuário local salvo no localStorage
+                const localStr = localStorage.getItem(LOCAL_USER_KEY);
+                if (localStr) {
+                    try {
+                        setSession(JSON.parse(localStr));
+                    } catch {
+                        localStorage.removeItem(LOCAL_USER_KEY);
+                    }
+                }
+            }
             setLoading(false);
         });
 
-        // Escuta mudanças (login, logout, token refresh)
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            setUser(session?.user ?? null);
+        // Escuta mudanças de sessão Supabase (login/logout remoto)
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, supaSession) => {
+            if (supaSession?.user) {
+                setSession({
+                    user: {
+                        id: supaSession.user.id,
+                        user_metadata: { name: supaSession.user.user_metadata?.name ?? 'Leitor' },
+                    }
+                });
+            }
             setLoading(false);
         });
 
@@ -41,10 +72,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const signOut = async () => {
         await supabase.auth.signOut();
+        localStorage.removeItem(LOCAL_USER_KEY);
+        localStorage.removeItem('sdsc-completed-days');
+        setSession(null);
     };
 
     return (
-        <AuthContext.Provider value={{ user, session, loading, signOut }}>
+        <AuthContext.Provider value={{ user: session?.user ?? null, session, loading, signOut }}>
             {children}
         </AuthContext.Provider>
     );
