@@ -58,22 +58,37 @@ const Register: React.FC = () => {
       }
     } // else 'fresh' = []
 
+    // Salva no localStorage imediatamente como fallback (mesma chave do sync.ts)
+    localStorage.setItem('sdsc-completed-days', JSON.stringify(completedDays));
+
     try {
-      // Pega o usuário logado que acabou de ser criado
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        // Insere o progresso inicial no DB
+      // Faz login diretamente com as credenciais que o usuário acabou de preencher
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (signInData?.session?.user) {
+        // Login bem-sucedido — salva progresso no banco
         await supabase.from('reading_progress').upsert({
-          user_id: session.user.id,
+          user_id: signInData.session.user.id,
           completed_days: completedDays,
           last_synced: new Date().toISOString()
         }, { onConflict: 'user_id' });
-
-        // Foca a recarga da tela
-        window.location.reload();
+        // AuthContext detecta a mudança de sessão e redireciona automaticamente
+        return;
       }
-    } catch (err) {
-      console.error(err);
+
+      // Se o erro for de confirmação de e-mail, orientar o usuário
+      if (signInError) {
+        const msg = signInError.message.toLowerCase();
+        if (msg.includes('confirm') || msg.includes('email') || msg.includes('verified')) {
+          setErrorMsg('Confirme seu e-mail e faça login para acessar o app. Seu progresso já foi salvo!');
+        } else {
+          setErrorMsg(signInError.message || 'Erro ao entrar. Tente fazer login manualmente.');
+        }
+        setStep(1);
+        setIsLogin(true);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Erro ao salvar progresso.');
     } finally {
       setLoading(false);
     }
